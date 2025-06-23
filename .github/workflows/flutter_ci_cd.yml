@@ -1,0 +1,87 @@
+name: Flutter CI/CD for Android and Windows
+
+on:
+  push:
+    branches: [ master ]
+
+env:
+  FLUTTER_VERSION: '3.19.0'
+  FIREBASE_GROUPS: testers
+  KEYSTORE_PATH: android/app/upload-keystore.jks
+  APK_PATH: build/app/outputs/flutter-apk/app-release.apk
+  EXE_PATH: build/windows/runner/Release/*.exe
+
+jobs:
+  build-android:
+    name: Build & Deploy Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Decode keystore from base64
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > ${{ env.KEYSTORE_PATH }}
+
+      - name: Generate key.properties
+        run: |
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" > android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
+          echo "storeFile=upload-keystore.jks" >> android/key.properties
+
+      - name: Build signed APK
+        run: flutter build apk --release
+
+      - name: Upload to Firebase App Distribution
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          file: ${{ env.APK_PATH }}
+          groups: ${{ env.FIREBASE_GROUPS }}
+
+      - name: Upload APK to GitHub Releases
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: ${{ env.APK_PATH }}
+          tag: release-${{ github.run_number }}
+          name: Android Release ${{ github.run_number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build & Deploy Windows EXE
+    runs-on: windows-latest
+    needs: build-android
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build EXE
+        run: flutter build windows
+
+      - name: Upload EXE to GitHub Releases
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ env.EXE_PATH }}
+          tag: release-${{ github.run_number }}
+          overwrite: true
